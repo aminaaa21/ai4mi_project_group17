@@ -34,6 +34,9 @@ from PIL import Image
 from tqdm import tqdm
 from torch import Tensor, einsum
 
+# For HD95 -> also added scipy to requirements file
+from scipy import ndimage
+
 tqdm_ = partial(tqdm, dynamic_ncols=True,
                 leave=True,
                 bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{rate_fmt}{postfix}]')
@@ -155,7 +158,31 @@ def meta_dice(sum_str: str, label: Tensor, pred: Tensor, smooth: float = 1e-8) -
 dice_coef = partial(meta_dice, "bk...->bk")
 dice_batch = partial(meta_dice, "bk...->k")  # used for 3d dice
 
+def hd95(pred, target, spacing=(1.0, 1.0, 1.0)):
+     pred = np.asarray(pred).astype(bool)
+     target = np.asarray(target).astype(bool)
 
+     # Make sure target and pred have same shape
+     if pred.shape != target.shape:
+          raise ValueError(f"Pred (={pred.shape}) and target (={target.shape}) do not have same shape")
+
+     pred_surface = pred ^ ndimage.binary_erosion(pred)
+     target_surface = target ^ ndimage.binary_erosion(target)
+     if not pred_surface.any() or not target_surface.any():
+          return np.inf
+     pred_distance = ndimage.distance_transform_edt(~pred_surface, sampling=spacing)
+
+     target_distance = ndimage.distance_transform_edt(~target_surface, sampling=spacing)
+     distances_pred_to_target = target_distance[pred_surface]
+     distances_target_to_pred = pred_distance[target_surface]
+
+     all_distances = np.concatenate([distances_pred_to_target, distances_target_to_pred])
+
+     return float(np.percentile(all_distances, 95))
+
+
+
+     
 def intersection(a: Tensor, b: Tensor) -> Tensor:
     assert a.shape == b.shape
     assert sset(a, [0, 1])
