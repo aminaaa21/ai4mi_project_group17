@@ -50,7 +50,7 @@ from utils import (Dcm,
                    dice_coef,
                    save_images)
 
-from losses import (CrossEntropy)
+from losses import CrossEntropy, DiceWeightedCELoss
 
 datasets_params: dict[str, dict[str, Any]] = {}
 # K for the number of classes
@@ -141,9 +141,26 @@ def runTraining(args):
     net, optimizer, device, train_loader, val_loader, K = setup(args)
 
     if args.mode == "full":
-        loss_fn = CrossEntropy(idk=list(range(K)))  # Supervise both background and foreground
+        if args.weighted_dice_loss:
+
+            if args.dataset not in ["SEGTHOR", "SEGTHOR_CLEAN"]:
+                raise ValueError("Weighted Dice loss is only available for SEGTHOR datasets")
+
+            class_weights = [
+                0.0774,
+                0.9420,
+                0.5153,
+                2.4652
+            ]
+
+            loss_fn = DiceWeightedCELoss(weights=class_weights)
+
+        else:
+            loss_fn = CrossEntropy(idk=list(range(K)))
+
     elif args.mode in ["partial"] and args.dataset == 'SEGTHOR':
-        loss_fn = CrossEntropy(idk=[0, 1, 3, 4])  # Do not supervise the heart (class 2)
+        loss_fn = CrossEntropy(idk=[0, 1, 3, 4])
+
     else:
         raise ValueError(args.mode, args.dataset)
 
@@ -265,6 +282,13 @@ def main():
                         help="Filter empty slices during training")
     parser.add_argument('--augment', action='store_true', 
                         help="Enable spatial data augmentations")
+
+    parser.add_argument(
+        '--weighted_dice_loss',
+        action='store_true',
+        help="Use Dice loss combined with class-weighted cross-entropy"
+    )
+
     args = parser.parse_args()
 
     pprint(args)
