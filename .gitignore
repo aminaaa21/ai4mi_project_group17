@@ -7,3 +7,9 @@ ai4mi/
 __pycache__/
 
 projectsdata/
+*.log
+*.err
+logs/
+venv/
+results/
+logs/
