@@ -23,8 +23,12 @@
 # SOFTWARE.
 
 from pathlib import Path
-from typing import Callable, Union
-
+from typing import Callable, Union, Optional
+import numpy as np
+import random
+import torch
+import torchvision.transforms.v2 as transforms
+import torchvision.transforms.v2.functional as TF
 from torch import Tensor
 from PIL import Image
 from torch.utils.data import Dataset
@@ -51,16 +55,32 @@ def make_dataset(root, subset) -> list[tuple[Path, Path | None]]:
 
 class SliceDataset(Dataset):
     def __init__(self, subset, root_dir, img_transform=None,
-                 gt_transform=None, augment=False, equalize=False, debug=False):
+                 gt_transform=None, augment=False, equalize=False, debug=False,
+                 is_25d: bool = False, crop_size: Optional[int] = 192,      # ADDED Dimensionality switch,
+                 filter_empty: bool = True):                  # optional 192x192 center crop (None: if you need to run the basic), and filtering out empty slices
         self.root_dir: str = root_dir
         self.img_transform: Callable = img_transform
         self.gt_transform: Callable = gt_transform
         self.augmentation: bool = augment
         self.equalize: bool = equalize
-
+        self.is_25d: bool = is_25d     # ADDED dimensionality attribute 
+        self.crop_size: Optional[int] = crop_size if crop_size and crop_size > 0 else None     # ADDED the optional crop
+        self.crop_transform = (
+            transforms.CenterCrop(size=(self.crop_size, self.crop_size)) if self.crop_size else None
+        )
         self.test_mode: bool = subset == 'test'
 
-        self.files = make_dataset(root_dir, subset)
+        raw_files = make_dataset(root_dir, subset)  # load raw file pairs
+        # Filter empty background slices (applied to train only)
+        if filter_empty and subset == 'train':                   # conditional slice filtering
+            self.files = []                                      # filtered path list initialization
+            for img_p, gt_p in raw_files:                        # iterate over dataset paths
+                if np.array(Image.open(gt_p)).sum() > 0:         # check for non-zero organ mask
+                    self.files.append((img_p, gt_p))             # keep slice if foreground exists
+        else:                                                    # fallback for test set or unfiltered run
+            self.files = raw_files                               # keep full raw file list
+       # self.files = make_dataset(root_dir, subset)
+
         if debug:
             self.files = self.files[:10]
 
@@ -68,19 +88,95 @@ class SliceDataset(Dataset):
 
     def __len__(self):
         return len(self.files)
+    
+    def _maybe_crop(self, tensor: Tensor) -> Tensor:      # ADDED crop switch to tensor
+        if self.crop_transform is not None:
+            return self.crop_transform(tensor)
+        return tensor
 
+    def _apply_joint_augmentation(self, img_pil, gt_pil):
+        # ADDED identical tilt/rotation and slight zoom-out/scale to image and mask
+         angle = random.uniform(-8.0, 8.0)
+         scale = random.uniform(0.85, 1.05)
+         
+         w, h = img_pil.size
+         translations = (int(random.uniform(-0.03, 0.03) * w), 
+                         int(random.uniform(-0.03, 0.03) * h))
+
+         img_aug = TF.affine(
+             img_pil, angle=angle, translate=translations, scale=scale, shear=0,
+             interpolation=TF.InterpolationMode.BILINEAR, fill=0
+         )
+         gt_aug = TF.affine(
+             gt_pil, angle=angle, translate=translations, scale=scale, shear=0,
+             interpolation=TF.InterpolationMode.NEAREST, fill=0
+         )
+         return img_aug, gt_aug
+    
     def __getitem__(self, index) -> dict[str, Union[Tensor, int, str]]:
         img_path, gt_path = self.files[index]
+        gt_pil_aug = None
 
-        img: Tensor = self.img_transform(Image.open(img_path))
+        if not self.is_25d:                                             # Original 2D logic
+            pil_curr = Image.open(img_path)
+            if not self.test_mode:
+                gt_pil_raw = Image.open(gt_path)
+                if self.augmentation:
+                    pil_curr, gt_pil_aug = self._apply_joint_augmentation(pil_curr, gt_pil_raw)
+                else:
+                    gt_pil_aug = gt_pil_raw
+
+            img: Tensor = self._maybe_crop(self.img_transform(pil_curr))
+        else:                                                           # ADDED 2.5D logic
+            prev_idx = max(0, index - 1)
+            curr_idx = index
+            next_idx = min(len(self.files) - 1, index + 1)
+ 
+            img_path_prev, _ = self.files[prev_idx]
+            img_path_curr = img_path
+            img_path_next, _ = self.files[next_idx]
+ 
+            # Prevent cross-patient volume mixing
+            if img_path_prev.stem.split('_')[0] != img_path_curr.stem.split('_')[0]:
+                img_path_prev = img_path_curr
+            if img_path_next.stem.split('_')[0] != img_path_curr.stem.split('_')[0]:
+                img_path_next = img_path_curr
+ 
+            pil_prev = Image.open(img_path_prev)
+            pil_curr = Image.open(img_path_curr)
+            pil_next = Image.open(img_path_next)
+             
+            if not self.test_mode:
+                gt_pil_raw = Image.open(gt_path)
+                if self.augmentation:
+                # Sample ONE set of affine parameters for all 3 slices & mask
+                    angle = random.uniform(-8.0, 8.0)
+                    scale = random.uniform(0.85, 1.05)
+                    w, h = pil_curr.size
+                    trans = (int(random.uniform(-0.03, 0.03) * w), int(random.uniform(-0.03, 0.03) * h))
+                    gt_pil_raw = Image.open(gt_path)
+                
+                    pil_prev = TF.affine(pil_prev, angle, trans, scale, 0, TF.InterpolationMode.BILINEAR)
+                    pil_curr = TF.affine(pil_curr, angle, trans, scale, 0, TF.InterpolationMode.BILINEAR)
+                    pil_next = TF.affine(pil_next, angle, trans, scale, 0, TF.InterpolationMode.BILINEAR)
+                    gt_pil_aug = TF.affine(gt_pil_raw, angle, trans, scale, 0, TF.InterpolationMode.NEAREST)
+                else:
+                        gt_pil_aug = gt_pil_raw
+
+            slice_prev = self.img_transform(pil_prev)
+            slice_curr = self.img_transform(pil_curr)
+            slice_next = self.img_transform(pil_next)
+
+            img: Tensor = self._maybe_crop(torch.cat([slice_prev, slice_curr, slice_next], dim=0))
+        
 
         data_dict = {"images": img,
-                     "stems": img_path.stem}
+                    "stems": self.files[index][0].stem}  # ADDED Dimensionality flexibility
 
         if not self.test_mode:
-            gt: Tensor = self.gt_transform(Image.open(gt_path))
-
-            _, W, H = img.shape
+            gt: Tensor = self._maybe_crop(self.gt_transform(gt_pil_aug))
+          
+            W, H = img.shape[-2:]  # ADDED Dimensionality flexibility
             K, _, _ = gt.shape
             assert gt.shape == (K, W, H)
 
