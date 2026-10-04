@@ -50,7 +50,7 @@ from utils import (Dcm,
                    dice_coef,
                    save_images)
 
-from losses import (CrossEntropy)
+from losses import CrossEntropy, DiceWeightedCELoss
 
 datasets_params: dict[str, dict[str, Any]] = {}
 # K for the number of classes
@@ -141,9 +141,25 @@ def runTraining(args):
     net, optimizer, device, train_loader, val_loader, K = setup(args)
 
     if args.mode == "full":
-        loss_fn = CrossEntropy(idk=list(range(K)))  # Supervise both background and foreground
-    elif args.mode in ["partial"] and args.dataset == 'SEGTHOR':
-        loss_fn = CrossEntropy(idk=[0, 1, 3, 4])  # Do not supervise the heart (class 2)
+        if args.weighted_dice_loss:
+
+            if args.dataset not in ["SEGTHOR", "SEGTHOR_CLEAN"]:
+                raise ValueError(
+                    "Weighted Dice loss is only available for SEGTHOR datasets"
+                )
+
+            class_weights = [
+                # TODO: insert the 5 new weights here
+            ]
+
+            loss_fn = DiceWeightedCELoss(weights=class_weights)
+
+        else:
+            loss_fn = CrossEntropy(idk=list(range(K)))
+
+    elif args.mode in ["partial"] and args.dataset == "SEGTHOR":
+        loss_fn = CrossEntropy(idk=[0, 1, 3, 4])
+
     else:
         raise ValueError(args.mode, args.dataset)
 
@@ -152,6 +168,7 @@ def runTraining(args):
     log_dice_tra: Tensor = torch.zeros((args.epochs, len(train_loader.dataset), K))
     log_loss_val: Tensor = torch.zeros((args.epochs, len(val_loader)))
     log_dice_val: Tensor = torch.zeros((args.epochs, len(val_loader.dataset), K))
+    log_acc_val: Tensor = torch.zeros((args.epochs, len(val_loader)))
 
     best_dice: float = 0
 
@@ -206,7 +223,13 @@ def runTraining(args):
                     if m == 'val':
                         with warnings.catch_warnings():
                             warnings.filterwarnings('ignore', category=UserWarning)
+
                             predicted_class: Tensor = probs2class(pred_probs)
+                            true_class: Tensor = gt.argmax(dim=1)
+
+                            accuracy = (predicted_class == true_class).float().mean()
+                            log_acc_val[e, i] = accuracy.item()
+
                             mult: int = 63 if K == 5 else (255 / (K - 1))
                             save_images(predicted_class * mult,
                                         data['stems'],
@@ -226,6 +249,7 @@ def runTraining(args):
         np.save(args.dest / "dice_tra.npy", log_dice_tra)
         np.save(args.dest / "loss_val.npy", log_loss_val)
         np.save(args.dest / "dice_val.npy", log_dice_val)
+        np.save(args.dest / "acc_val.npy", log_acc_val)
 
         current_dice: float = log_dice_val[e, :, 1:].mean().item()
         if current_dice > best_dice:
@@ -265,6 +289,12 @@ def main():
                         help="Filter empty slices during training")
     parser.add_argument('--augment', action='store_true', 
                         help="Enable spatial data augmentations")
+    parser.add_argument(
+    '--weighted_dice_loss',
+    action='store_true',
+    help="Use Dice loss combined with class-weighted cross-entropy"
+    )
+    
     args = parser.parse_args()
 
     pprint(args)
