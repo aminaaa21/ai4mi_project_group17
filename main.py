@@ -207,6 +207,7 @@ def runTraining(args):
     log_loss_val: Tensor = torch.zeros((args.epochs, len(val_loader)))
     log_dice_val: Tensor = torch.zeros((args.epochs, len(val_loader.dataset), K))
     log_acc_val: Tensor = torch.zeros((args.epochs, len(val_loader)))
+    log_acc_val: Tensor = torch.zeros((args.epochs, len(val_loader)))
 
     best_dice: float = 0
 
@@ -262,7 +263,13 @@ def runTraining(args):
                         with warnings.catch_warnings():
                             warnings.filterwarnings('ignore', category=UserWarning)
 
+
                             predicted_class: Tensor = probs2class(pred_probs)
+                            true_class: Tensor = gt.argmax(dim=1)
+
+                            accuracy = (predicted_class == true_class).float().mean()
+                            log_acc_val[e, i] = accuracy.item()
+
                             true_class: Tensor = gt.argmax(dim=1)
 
                             accuracy = (predicted_class == true_class).float().mean()
