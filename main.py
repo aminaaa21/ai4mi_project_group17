@@ -33,6 +33,7 @@ from shutil import copytree, rmtree
 import torch
 import numpy as np
 import torch.nn.functional as F
+import subprocess
 from torch import nn, Tensor
 from torchvision import transforms
 from torch.utils.data import DataLoader
@@ -149,7 +150,11 @@ def runTraining(args):
                 )
 
             class_weights = [
-                # TODO: insert the 5 new weights here
+   		0.0472,  # background
+    		1.7078,  # esophagus
+    		0.4252,  # heart
+   	 	1.9890,  # trachea
+	    	0.8308   # aorta
             ]
 
             loss_fn = DiceWeightedCELoss(weights=class_weights)
@@ -250,6 +255,27 @@ def runTraining(args):
         np.save(args.dest / "loss_val.npy", log_loss_val)
         np.save(args.dest / "dice_val.npy", log_dice_val)
         np.save(args.dest / "acc_val.npy", log_acc_val)
+
+        # Save diagnostic plots every 10 epochs
+        if (e + 1) % 10 == 0:
+            try:
+                result = subprocess.run(
+                    ["python", "weighted_metrics_plot.py", str(e + 1)],
+                    check=False
+                )
+
+                if result.returncode != 0:
+                    print(
+                        f"Warning: plotting failed at epoch {e + 1}, "
+                        "training continues."
+                    )
+
+            except Exception as plot_error:
+                print(
+                    f"Warning: plotting failed at epoch {e + 1}: "
+                    f"{plot_error}"
+                )
+                print("Training continues.")
 
         current_dice: float = log_dice_val[e, :, 1:].mean().item()
         if current_dice > best_dice:
