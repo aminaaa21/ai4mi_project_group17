@@ -34,6 +34,7 @@ import torch
 import numpy as np
 import torch.nn.functional as F
 import subprocess
+import subprocess
 from torch import nn, Tensor
 from torchvision import transforms
 from torch.utils.data import DataLoader
@@ -180,6 +181,11 @@ def runTraining(args):
                 )
 
             class_weights = [
+   		0.0472,  # background
+    		1.7078,  # esophagus
+    		0.4252,  # heart
+   	 	1.9890,  # trachea
+	    	0.8308   # aorta
    		0.0472,  # background
     		1.7078,  # esophagus
     		0.4252,  # heart
