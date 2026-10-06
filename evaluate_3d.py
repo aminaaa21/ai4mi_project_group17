@@ -11,9 +11,9 @@ from utils import class2one_hot, dice_batch # 3D dice already implemented in uti
 To evaluate 3d dataset, run the following in git bash
 
 python evaluate_3d.py \
-    --pred_dir TODO \
-    --gt_dir TODO \
-    --output_dir TODO
+    --pred_dir volumes/segthor/ce \
+    --gt_dir data/train \
+    --output_dir results/metrics
 
 Each patient has gt and pred of which each is a 2D array 
 -> this evaluator will load both and get the actual voxel labels
@@ -35,8 +35,6 @@ def load_nifti(path):
     spacing = nii.header.get_zooms()[:3]
 
     return image, spacing
-
-
 
 
 def dice_3d(gt, pred):
@@ -65,9 +63,7 @@ def get_surface(mask):
 
 def get_crop(mask1, mask2):
     """
-    Get a bounding box containing both masks.
-
-    A small 1-voxel margin is added so that surface voxels
+    Bounding box containing both masks -> small 1-voxel margin is added so that surface voxels
     near the boundary are handled correctly.
     """
 
@@ -91,9 +87,7 @@ def get_crop(mask1, mask2):
 
 def surface_distances(gt, pred, spacing):
     """
-    Calculate symmetric surface distances once.
-
-    These distances are then used for both HD95 and MSD.
+    Calculate symmetric surface distances once -> used for both HD95 and MSD.
     """
 
     if not np.any(gt) and not np.any(pred):
@@ -132,7 +126,7 @@ def surface_distances(gt, pred, spacing):
 
 
 def hd95_from_distances(distances):
-    """Calculate HD95 from symmetric surface distances."""
+    """HD95 from symmetric surface distances"""
 
     if distances is None:
         return np.inf
@@ -147,7 +141,7 @@ def hd95_from_distances(distances):
 
 
 def msd_from_distances(distances):
-    """Calculate MSD from symmetric surface distances."""
+    """MSD from symmetric surface distances"""
 
     if distances is None:
         return np.inf
@@ -159,15 +153,7 @@ def msd_from_distances(distances):
 
 def find_gt(gt_dir, patient_id):
     """
-    Find the GT file for a patient.
-
-    Expected structure:
-
-        gt_dir/
-            Patient_01/
-                GT.nii.gz
-            Patient_02/
-                GT.nii.gz
+    Find the GT file for a patient
     """
 
     path = gt_dir / patient_id / "GT.nii.gz"
@@ -303,18 +289,14 @@ def main(args):
             f"{np.unique(pred)}"
         )
 
-        # ----------------------------------------
         # Dice
-        # ----------------------------------------
         print("calculating dice")
         dice = dice_3d(
             gt,
             pred
         )
 
-        # ----------------------------------------
-        # HD95 and MSD
-        # ----------------------------------------
+        # HD95 and MSD -> more efficient this way
         print("calculating hd95 and msd")
 
         hd95_values = np.zeros(K)
@@ -373,9 +355,7 @@ def main(args):
             "No patients were evaluated."
         )
 
-    # ----------------------------------------
     # Mean over patients
-    # ----------------------------------------
 
     dice_array = np.array(
         list(dice_results.values())
@@ -414,10 +394,7 @@ def main(args):
             f"{msd_array[:, class_id].mean():.4f} mm"
         )
 
-    # ----------------------------------------
     # Save results
-    # ----------------------------------------
-
     np.savez(
         output_dir / "dice.npz",
         **dice_results
@@ -436,9 +413,8 @@ def main(args):
     print(
         f"\nSaved metrics to {output_dir}"
     )
-    # ----------------------------------------
+
     # Make plot
-    # ----------------------------------------
 
     make_plot(
         list(dice_results.keys()),
