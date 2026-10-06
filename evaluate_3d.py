@@ -6,9 +6,9 @@ import matplotlib.pyplot as plt
 from scipy.ndimage import binary_erosion, distance_transform_edt
 from pathlib import Path
 from utils import class2one_hot, dice_batch # 3D dice already implemented in utils
-
+# Error #15 -> conda install nomkl
 """
-To evaluate 3d dataset, run the following in git bash
+To evaluate 3d dataset, run the following in git bash (after stitching)
 
 python evaluate_3d.py \
     --pred_dir volumes/segthor/ce \
@@ -350,6 +350,12 @@ def main(args):
                 f"  {CLASS_NAMES[class_id]}: "
                 f"{msd_values[class_id]:.4f} mm"
             )
+
+        # Save this patient's results
+        dice_results[patient_id] = dice
+        hd95_results[patient_id] = hd95_values
+        msd_results[patient_id] = msd_values
+        
     if len(dice_results) == 0:
         raise RuntimeError(
             "No patients were evaluated."
