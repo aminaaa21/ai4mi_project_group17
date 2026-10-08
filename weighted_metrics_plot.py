@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-results_dir = Path("results/weighted_dice_clean_100ep")
+results_dir = Path("results/weighted_dice_lr5e5_wd1e5_50ep")
 
 # Number of completed epochs is passed by main.py
 completed_epochs = int(sys.argv[1])

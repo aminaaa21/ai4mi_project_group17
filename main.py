@@ -95,8 +95,13 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     net.init_weights()
     net.to(device)
 
-    lr = 0.0005
-    optimizer = torch.optim.Adam(net.parameters(), lr=lr, betas=(0.9, 0.999))
+    lr = args.lr
+    optimizer = torch.optim.Adam(
+        net.parameters(),
+        lr=lr,
+        betas=(0.9, 0.999),
+        weight_decay=args.weight_decay
+    )
 
     # Dataset part
     B: int = datasets_params[args.dataset]['B']
@@ -321,6 +326,9 @@ def main():
     help="Use Dice loss combined with class-weighted cross-entropy"
     )
     
+    parser.add_argument('--lr', type=float, default=0.0005)
+    parser.add_argument('--weight_decay', type=float, default=0.0)
+
     args = parser.parse_args()
 
     pprint(args)
