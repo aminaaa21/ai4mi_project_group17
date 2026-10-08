@@ -50,7 +50,7 @@ from utils import (Dcm,
                    dice_coef,
                    save_images)
 
-from losses import (CrossEntropy)
+from losses import (CrossEntropy, CrossEntropyDice)
 
 datasets_params: dict[str, dict[str, Any]] = {}
 # K for the number of classes
@@ -58,10 +58,21 @@ datasets_params: dict[str, dict[str, Any]] = {}
 datasets_params["TOY2"] = {'K': 2, 'net': shallowCNN, 'B': 2, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR_CLEAN"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+# ADDED HU windowing (hu_window/)
+# Sliced with hu_window/slice_segthor_window.py, one window (soft tissue -150..250 HU) as grayscale .png
+datasets_params["SEGTHOR_WINDOW"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+# Sliced with 3 HU windows at once, saved as the 3 channels of an RGB .png
+datasets_params["SEGTHOR_MULTI"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2,
+                                    'in_channels': 3}
 
-def img_transform(img):
-        img = img.convert('L')
-        img = np.array(img)[np.newaxis, ...]
+def img_transform(in_channels, img):
+        if in_channels == 1:
+            img = img.convert('L')
+            img = np.array(img)[np.newaxis, ...]  # (1, W, H)
+        else:
+            # ADDED for SEGTHOR_MULTI: one HU window per color channel
+            img = img.convert('RGB')
+            img = np.array(img).transpose(2, 0, 1)  # (W, H, 3) -> (3, W, H)
         img = img / 255  # max <= 1
         img = torch.tensor(img, dtype=torch.float32)
         return img
@@ -88,7 +99,14 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     factor: int = datasets_params[args.dataset]['factor'] if 'factor' in datasets_params[args.dataset] else 2
    
     # ADDED: Dynamic input channel count (1 for 2D, 3 for 2.5D)
-    in_channels: int = 3 if args.is_25d else 1
+    # ADDED: SEGTHOR_MULTI already has 3 channels per slice (one per HU window)
+    channels_per_slice: int = datasets_params[args.dataset]['in_channels'] if 'in_channels' in datasets_params[args.dataset] else 1
+    if args.is_25d:
+        # 2.5D with 3 windows would give 3 x 3 = 9 channels, more than ENet's first layer can take
+        assert channels_per_slice == 1, "--is_25d does not work with SEGTHOR_MULTI"
+        in_channels: int = 3
+    else:
+        in_channels = channels_per_slice
 
     net = datasets_params[args.dataset]['net'](in_channels, K, kernels=kernels, factor=factor)
     net.init_weights()
@@ -100,13 +118,17 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     # Dataset part
     B: int = datasets_params[args.dataset]['B']
     crop_size: Optional[int] = args.crop_size if args.crop_size and args.crop_size > 0 else None       # so we can run vanilla baseline, and then preprocessed flexibly
-    root_dir = Path("data") / args.dataset
+    # ADDED --data_dir, to train on another folder than data/<dataset> (e.g. one of the folds)
+    if args.data_dir is not None:
+        root_dir = args.data_dir
+    else:
+        root_dir = Path("data") / args.dataset
 
 
 
     train_set = SliceDataset('train',
                              root_dir,
-                             img_transform=img_transform,
+                             img_transform=partial(img_transform, channels_per_slice),
                              gt_transform= partial(gt_transform, K),
                              augment=args.augment,
                              debug=args.debug,
@@ -120,7 +142,7 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
 
     val_set = SliceDataset('val',
                            root_dir,
-                           img_transform=img_transform,
+                           img_transform=partial(img_transform, channels_per_slice),
                            gt_transform=partial(gt_transform, K),
                            debug=args.debug,
                            is_25d=args.is_25d,           # Dimensionality switc
@@ -140,8 +162,13 @@ def runTraining(args):
     print(f">>> Setting up to train on {args.dataset} with {args.mode}")
     net, optimizer, device, train_loader, val_loader, K = setup(args)
 
+    assert args.loss == "ce" or args.mode == "full", "--loss ce_dice only works with --mode full"
     if args.mode == "full":
-        loss_fn = CrossEntropy(idk=list(range(K)))  # Supervise both background and foreground
+        if args.loss == "ce_dice":
+            # ADDED Cross-entropy on all classes + soft Dice on the organs (not the background)
+            loss_fn = CrossEntropyDice(idk=list(range(K)), dice_idk=list(range(1, K)))
+        else:
+            loss_fn = CrossEntropy(idk=list(range(K)))  # Supervise both background and foreground
     elif args.mode in ["partial"] and args.dataset == 'SEGTHOR':
         loss_fn = CrossEntropy(idk=[0, 1, 3, 4])  # Do not supervise the heart (class 2)
     else:
@@ -265,6 +292,13 @@ def main():
                         help="Filter empty slices during training")
     parser.add_argument('--augment', action='store_true', 
                         help="Enable spatial data augmentations")
+    # ADDED HU windowing experiments (hu_window/)
+    parser.add_argument('--data_dir', type=Path, default=None,
+                        help="Folder of the sliced data (default: data/<dataset>). "
+                             "Useful to train on another fold, e.g. data/SEGTHOR_FULL_multi_fold1")
+    parser.add_argument('--loss', default='ce', choices=['ce', 'ce_dice'],
+                        help="ce: cross-entropy only (as the baseline). ce_dice: cross-entropy + soft Dice "
+                             "(only with --mode full), so that small organs count as much as big ones")
     args = parser.parse_args()
 
     pprint(args)
