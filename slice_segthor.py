@@ -117,9 +117,8 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
         # assert set(np.unique(gt_slice)) <= set(range(5))
         assert set(np.unique(gt_slice)) <= set([0, 63, 126, 189, 252]), np.unique(gt_slice)
 
-        arrays: list[np.ndarray] = [img_slice, gt_slice]
-
-        subfolders: list[str] = ["img", "gt"]
+        arrays = [img_slice] if test_mode else [img_slice, gt_slice]
+        subfolders = ["img"] if test_mode else ["img", "gt"]
         assert len(arrays) == len(subfolders)
         for save_subfolder, data in zip(subfolders,
                                         arrays):
@@ -172,7 +171,7 @@ def main(args: argparse.Namespace):
     resolution_dict: dict[str, tuple[float, float, float]] = {}
 
     split_ids: list[str]
-    for mode, split_ids in zip(["train", "val"], [training_ids, validation_ids]):
+    for mode, split_ids in zip(["train", "val", "test"], [training_ids, validation_ids, test_ids]):
         dest_mode: Path = dest_path / mode
         print(f"Slicing {len(split_ids)} pairs to {dest_mode}")
 

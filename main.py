@@ -243,6 +243,60 @@ def runTraining(args):
             torch.save(net, args.dest / "bestmodel.pkl")
             torch.save(net.state_dict(), args.dest / "bestweights.pt")
 
+def runTest(args):
+    device = torch.device(
+        "cuda" if args.gpu and torch.cuda.is_available() else "cpu"
+    )
+
+    checkpoint = Path(
+        r"C:\Users\amina\OneDrive\Documents\1 AI4MI\ai4mi_project_group17\results\baseline_clean_100ep_cpu\bestmodel.pkl"
+    )
+
+    # Load the already-trained model
+    net = torch.load(
+        checkpoint, map_location=device, weights_only=False
+    )
+    net = net.to(device)
+    net.eval()
+
+    # Use the same preprocessing as training
+    root_dir = Path("data") / args.dataset
+    test_set = SliceDataset(
+        "test",
+        root_dir,
+        img_transform=img_transform,
+        debug=args.debug,
+        is_25d=args.is_25d,
+        crop_size=args.crop_size,
+        filter_empty=False,
+    )
+    test_loader = DataLoader(
+        test_set, batch_size=8, shuffle=False
+    )
+
+    K = datasets_params[args.dataset]["K"]
+    mult = 63 if K == 5 else 255 / (K - 1)
+
+    output_dir = args.dest / "test"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    with torch.no_grad():
+        for data in test_loader:
+            images = data["images"].to(device)
+            outputs = net(images)
+
+            # Match the prediction conversion used during validation
+            pred_probs = torch.softmax(outputs, dim=1)
+            predicted_class = probs2class(pred_probs)
+
+            save_images(
+                predicted_class * mult,
+                data["stems"],
+                output_dir,
+            )
+
+    print(f"Test predictions saved to {output_dir}")
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -265,11 +319,17 @@ def main():
                         help="Filter empty slices during training")
     parser.add_argument('--augment', action='store_true', 
                         help="Enable spatial data augmentations")
+    parser.add_argument("--test", action="store_true")
     args = parser.parse_args()
 
     pprint(args)
 
-    runTraining(args)
+    # runTraining(args)
+    if args.test:
+        runTest(args)
+    else:
+        runTraining(args)
+        
 
 
 if __name__ == '__main__':
