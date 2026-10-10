@@ -427,7 +427,7 @@ def main(args):
         dice_array,
         hd95_array,
         msd_array,
-        output_dir / "metrics.png"
+        output_dir / "metrics_per_patient.png"
     )
 
     print(
@@ -435,7 +435,7 @@ def main(args):
     )
 
     print(
-        f"Saved plot to {output_dir / 'metrics.png'}"
+        f"Saved plot to {output_dir / 'metrics_per_patient.png'}"
     )
 
 def get_args():

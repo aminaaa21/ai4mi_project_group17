@@ -12,12 +12,12 @@ from matplotlib.colors import ListedColormap, BoundaryNorm
 from matplotlib.patches import Patch
 
 GT_ROOT = Path("data/train")
-PRED_ROOT = Path("volumes/segthor/ce")
-METRIC_ROOT = Path("results/metrics")
-OUT = Path("results/error_analysis")
+PRED_ROOT = Path("volumes/single_changes/windowing")
+METRIC_ROOT = Path("results/METRICS/single_changes/windowing")
+OUT = Path("results/ERROR_ANALYSIS/single_changes/windowing")
 OUT.mkdir(parents=True, exist_ok=True)
 LABELS = (1, 2, 3, 4)
-CLASS_NAMES = {c: f"Label {c}" for c in LABELS}
+CLASS_NAMES = {1: "Esophagus", 2: "Heart", 3:"Trachea", 4:"Aorta"}
 COLORS = ("#0072B2", "#E69F00", "#009E73", "#CC79A7")
 EXAMPLES = [("Patient_35", 1), ("Patient_22", 3),
             ("Patient_30", 2), ("Patient_21", 3)]
