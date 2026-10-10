@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, BoundaryNorm
 from matplotlib.patches import Patch
 
-GT_ROOT = Path("data/data/segthor_train_full/train")
+GT_ROOT = Path("data/train")
 PRED_ROOT = Path("volumes/segthor/ce")
 METRIC_ROOT = Path("results/metrics")
 OUT = Path("results/error_analysis")
