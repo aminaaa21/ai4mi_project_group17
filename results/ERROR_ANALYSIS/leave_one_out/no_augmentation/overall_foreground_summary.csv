@@ -1,0 +1,2 @@
+n_patients,n_foreground_classes,dice_macro_mean,dice_patient_sd,hd95_mm_macro_mean,hd95_mm_patient_sd,msd_mm_macro_mean,msd_mm_patient_sd
+10,4,0.7305213072420593,0.06886549066479097,82.7377290580455,40.16400445158175,12.50484310281873,5.863856037377454
