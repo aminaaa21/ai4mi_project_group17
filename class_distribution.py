@@ -4,18 +4,20 @@ import numpy as np
 from PIL import Image
 
 
-gt_dir = Path("data/SEGTHOR/train/gt")
+gt_dir = Path("data/SEGTHOR_FULL/train/gt")
+
+if not gt_dir.exists():
+    raise FileNotFoundError(f"Could not find training masks at: {gt_dir}")
 
 class_names = [
     "background",
-    "esophagus+aorta",
+    "esophagus",
     "heart",
-    "trachea"
+    "trachea",
+    "aorta"
 ]
 
-class_counts = np.zeros(4, dtype=np.int64)
-
-crop_size = 192
+class_counts = np.zeros(5, dtype=np.int64)
 
 
 # Check which pixel values are present in the masks
@@ -54,7 +56,7 @@ for gt_path in sorted(gt_dir.glob("*.png")):
     labels = (mask / 63).astype(int)
 
     # Count how many pixels belong to every class
-    for class_id in range(4):
+    for class_id in range(5):
         class_counts[class_id] += np.sum(labels == class_id)
 
 
@@ -76,7 +78,7 @@ for class_id in range(4):
     )
 
 
-# Calculate the frequency of every class
+# Calculate frequency of every class
 class_frequencies = class_counts / total_pixels
 
 # Give rare classes more weight
@@ -90,7 +92,7 @@ class_weights = class_weights / class_weights.mean()
 print()
 print("Class weights:")
 
-for class_id in range(4):
+for class_id in range(5):
     print(
         class_id,
         class_names[class_id],

@@ -2,8 +2,14 @@ data/*
 !data/*.b3sum
 !data/*.sha256
 results/
-volumes/
+!results/baseline_clean_100ep_cpu/
 ai4mi/
 __pycache__/
 
 projectsdata/
+*.log
+*.err
+logs/
+venv/
+results/
+logs/
