@@ -121,7 +121,9 @@ class DiceWeightedCELoss():
         dice = self.dice_loss(pred_softmax, target)
         ce = self.ce_loss(pred_softmax, target)
 
+        # Combine both losses
         loss = dice + ce
+
         return loss
     
 class PartialCrossEntropy(CrossEntropy):

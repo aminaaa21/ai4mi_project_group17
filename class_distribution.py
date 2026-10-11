@@ -25,11 +25,6 @@ unique_values = set()
 
 for gt_path in sorted(gt_dir.glob("*.png")):
     mask = np.array(Image.open(gt_path))
-
-    # Skip empty training slices
-    if mask.sum() == 0:
-        continue
-
     unique_values.update(np.unique(mask).tolist())
 
 print("Unique values in training masks:")
@@ -45,25 +40,34 @@ for gt_path in sorted(gt_dir.glob("*.png")):
     if mask.sum() == 0:
         continue
 
-    # No crop here:
-    # Galina's clean baseline used --crop_size 0
+    # Calculate where the center crop starts
+    height, width = mask.shape
 
-    # Convert mask values to class numbers
+    start_y = (height - crop_size) // 2
+    start_x = (width - crop_size) // 2
+
+    end_y = start_y + crop_size
+    end_x = start_x + crop_size
+
+    # Apply the same center crop used during training
+    mask = mask[start_y:end_y, start_x:end_x]
+
+    # Convert the mask values to class numbers
     labels = (mask / 63).astype(int)
 
-    # Count pixels for all five classes
+    # Count how many pixels belong to every class
     for class_id in range(5):
         class_counts[class_id] += np.sum(labels == class_id)
 
 
-# Calculate total number of pixels
+# Calculate the total number of pixels
 total_pixels = class_counts.sum()
 
 
-# Print class distribution
-print("Class distribution after empty-slice filtering:")
+# Print the class distribution
+print("Class distribution after training preprocessing:")
 
-for class_id in range(5):
+for class_id in range(4):
     percentage = 100 * class_counts[class_id] / total_pixels
 
     print(
