@@ -73,9 +73,9 @@ def merge_patient(id_: str, dest_folder: str, images: list[Path],
 
     # res_arr = res_arr.astype(np.int16)
     res_arr //= 63  # For segthor only
-    # <= instead of ==: a bad prediction can miss an organ completely (e.g. no trachea at all)
-    assert set(np.unique(res_arr)) <= set(range(5)), np.uint8(res_arr)
-
+    assert set(np.unique(res_arr)).issubset(set(range(5))), (
+        f"Unexpected class values in prediction: {np.unique(res_arr)}"
+    )
     new_nib = nib.nifti1.Nifti1Image(res_arr, affine=orig_nib.affine, header=orig_nib.header)
     nib.save(new_nib, (Path(dest_folder) / id_).with_suffix(".nii.gz"))
 
