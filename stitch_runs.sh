@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Stitch the best-epoch predictions of the runs of run_single_changes.sh, run_full_model.sh and
-# run_leave_one_out.sh back to 3D volumes (.nii.gz), for the 3D evaluation with evaluate_3d.py.
+# Stitch the best-epoch predictions of the runs of run_single_changes.sh, run_full_model.sh,
+# run_leave_one_out.sh and run_full_model_25d.sh back to 3D volumes (.nii.gz), for the 3D
+# evaluation with evaluate_3d.py.
 # The volumes of results/<name> go to volumes/<name>. Runs that did not finish are left out.
 
 set -e
@@ -8,7 +9,9 @@ set -e
 RUNS="single_changes/windowing single_changes/weight_decay single_changes/augmentation
       single_changes/weighted_loss single_changes/2_5d single_changes/windowing_1ch full_model
       leave_one_out/no_windowing leave_one_out/no_weight_decay leave_one_out/no_augmentation
-      leave_one_out/no_weighted_loss"
+      leave_one_out/no_weighted_loss
+      full_model_25d/full full_model_25d/no_windowing full_model_25d/no_weight_decay
+      full_model_25d/no_augmentation full_model_25d/no_weighted_loss full_model_25d/no_2_5d"
 
 for run in $RUNS; do
     if [ -f results/$run/finished ] && [ ! -d volumes/$run ]; then
