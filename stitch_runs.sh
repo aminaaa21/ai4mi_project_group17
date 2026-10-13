@@ -6,7 +6,7 @@
 set -e
 
 RUNS="single_changes/windowing single_changes/weight_decay single_changes/augmentation
-      single_changes/weighted_loss single_changes/2_5d full_model
+      single_changes/weighted_loss single_changes/2_5d single_changes/windowing_1ch full_model
       leave_one_out/no_windowing leave_one_out/no_weight_decay leave_one_out/no_augmentation
       leave_one_out/no_weighted_loss"
 
