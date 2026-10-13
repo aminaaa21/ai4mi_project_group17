@@ -11,7 +11,10 @@ RUNS="single_changes/windowing single_changes/weight_decay single_changes/augmen
       leave_one_out/no_windowing leave_one_out/no_weight_decay leave_one_out/no_augmentation
       leave_one_out/no_weighted_loss
       full_model_25d/full full_model_25d/no_windowing full_model_25d/no_weight_decay
-      full_model_25d/no_augmentation full_model_25d/no_weighted_loss full_model_25d/no_2_5d"
+      full_model_25d/no_augmentation full_model_25d/no_weighted_loss full_model_25d/no_2_5d
+      single_changes/weight_decay_only single_changes/lower_lr
+      full_model_25d/no_weight_decay_lr_kept full_model_25d/no_lower_lr
+      leave_one_out/no_lower_lr leave_one_out/no_weight_decay_lr_kept"
 
 for run in $RUNS; do
     if [ -f results/$run/finished ] && [ ! -d volumes/$run ]; then

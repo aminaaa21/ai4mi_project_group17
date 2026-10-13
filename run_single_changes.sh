@@ -3,6 +3,8 @@
 #   windowing      3 HU windows as input channels (SEGTHOR_MULTI, see hu_window/)
 #   windowing_1ch  only the soft tissue window -150..250 HU, 1 input channel (SEGTHOR_WINDOW)
 #   weight_decay   weight decay (L2) of 0.0001, with a learning rate of 0.00005 instead of 0.0005
+#   weight_decay_only  weight decay (L2) of 0.0001, with the normal learning rate of 0.0005
+#   lower_lr       learning rate of 0.00005 instead of 0.0005, without weight decay
 #   augmentation   spatial augmentation (small rotations, scaling and shifts)
 #   weighted_loss  Dice + class-weighted cross-entropy
 #   2_5d           2.5D: the slices above and below as 2 extra input channels
@@ -16,7 +18,7 @@ set -e
 SOURCE=data/segthor_train_full
 RESULTS=results/single_changes
 EPOCHS=100
-RUNS="windowing weight_decay augmentation weighted_loss 2_5d windowing_1ch"
+RUNS="windowing weight_decay augmentation weighted_loss 2_5d windowing_1ch weight_decay_only lower_lr"
 
 # 1. Slice the data, with the same split as SEGTHOR_CLEAN (10 validation patients, fold 0)
 if [ ! -d data/SEGTHOR_CLEAN ]; then
@@ -49,6 +51,8 @@ for run in $RUNS; do
         weighted_loss) options="--dataset SEGTHOR_CLEAN --weighted_dice_loss" ;;
         2_5d) options="--dataset SEGTHOR_CLEAN --is_25d" ;;
         windowing_1ch) options="--dataset SEGTHOR_WINDOW" ;;
+        weight_decay_only) options="--dataset SEGTHOR_CLEAN --weight_decay 0.0001" ;;
+        lower_lr) options="--dataset SEGTHOR_CLEAN --lr 0.00005" ;;
     esac
 
     if [ ! -f $RESULTS/$run/finished ]; then

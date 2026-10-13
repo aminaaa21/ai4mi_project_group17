@@ -3,6 +3,8 @@
 # change adds when all the others are already there:
 #   no_windowing      SEGTHOR_CLEAN (min-max normalization) instead of the 3 HU windows
 #   no_weight_decay   no weight decay, and the normal learning rate of 0.0005 instead of 0.00005
+#   no_lower_lr       the normal learning rate of 0.0005, weight decay stays
+#   no_weight_decay_lr_kept  no weight decay, the learning rate stays 0.00005
 #   no_augmentation   no spatial augmentation
 #   no_weighted_loss  cross-entropy instead of Dice + class-weighted cross-entropy
 #
@@ -13,7 +15,7 @@ set -e
 
 RESULTS=results/leave_one_out
 EPOCHS=100
-RUNS="no_windowing no_weight_decay no_augmentation no_weighted_loss"
+RUNS="no_windowing no_weight_decay no_augmentation no_weighted_loss no_lower_lr no_weight_decay_lr_kept"
 
 for run in $RUNS; do
     case $run in
@@ -21,6 +23,8 @@ for run in $RUNS; do
         no_weight_decay) options="--dataset SEGTHOR_MULTI --augment --weighted_dice_loss" ;;
         no_augmentation) options="--dataset SEGTHOR_MULTI --lr 0.00005 --weight_decay 0.0001 --weighted_dice_loss" ;;
         no_weighted_loss) options="--dataset SEGTHOR_MULTI --lr 0.00005 --weight_decay 0.0001 --augment" ;;
+        no_lower_lr) options="--dataset SEGTHOR_MULTI --weight_decay 0.0001 --augment --weighted_dice_loss" ;;
+        no_weight_decay_lr_kept) options="--dataset SEGTHOR_MULTI --lr 0.00005 --augment --weighted_dice_loss" ;;
     esac
 
     if [ ! -f $RESULTS/$run/finished ]; then
