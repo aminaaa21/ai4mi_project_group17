@@ -2,6 +2,7 @@
 
 <!-- MarkdownTOC autolink="true" autoanchor="true" -->
 
+- [Group 17: run our best model](#group-17-run-our-best-model)
 - [Project overview](#project-overview)
 - [Codebase features](#codebase-features)
 - [Codebase use](#codebase-use)
@@ -23,6 +24,25 @@
     - [Viewer on Windows](#viewer-on-windows)
 
 <!-- /MarkdownTOC -->
+
+
+<a id="group-17-run-our-best-model"></a>
+## Group 17: run our best model
+Our best model (`canvas_submission/bestmodel-group-17.pkl`) is ENet with 3 HU windows as input channels (soft tissue -150..250, air/lungs -1000..-200, contrast/bone 100..500), spatial augmentation and Dice + class-weighted cross-entropy, trained for 100 epochs with learning rate 0.0005 and without weight decay.
+
+To segment new CT scans, put them in one folder (`Patient_XX.nii.gz`, or `Patient_XX/Patient_XX.nii.gz` as in the training data) and run:
+```
+$ python main.py --predict --scan_dir data/test --dest predictions --gpu
+```
+This windows every slice the same way as in training, runs the model and saves one `Patient_XX.nii.gz` per scan in `predictions/`, with the same size and affine as the scan (labels 0 = background, 1 = esophagus, 2 = heart, 3 = trachea, 4 = aorta). Use `--checkpoint` to run another trained model with 3 windows, and leave out `--gpu` to run on the CPU.
+
+Our experiments can be repeated with the scripts below (each run trains for 100 epochs, the results go to `results/`):
+* `run_single_changes.sh`: the baseline with one change at a time;
+* `run_full_model.sh` and `run_leave_one_out.sh`: the full model with 3 windows, and the full model with one change left out;
+* `run_full_model_25d.sh`: the full model with 2.5D and 1 window (2.5D and 3 windows can not be combined);
+* `run_final_check.sh` and `run_ablation_lr0005.sh`: the ablation with learning rate 0.0005;
+* `stitch_runs.sh`: stitches the validation predictions of all runs back to 3D volumes, for `evaluate_3d.py`;
+* `plot_ablation.py`: the charts of our presentation, from the metrics in `results/METRICS`.
 
 
 <a id="project-overview"></a>

@@ -32,6 +32,7 @@ from shutil import copytree, rmtree
 
 import torch
 import numpy as np
+import nibabel as nib
 import torch.nn.functional as F
 import subprocess
 from torch import nn, Tensor
@@ -52,6 +53,7 @@ from utils import (Dcm,
                    save_images)
 
 from losses import (CrossEntropy, CrossEntropyDice, DiceWeightedCELoss)
+from hu_window.slice_segthor_window import window_and_norm, resize_
 
 datasets_params: dict[str, dict[str, Any]] = {}
 # K for the number of classes
@@ -327,65 +329,65 @@ def runTraining(args):
             torch.save(net.state_dict(), args.dest / "bestweights.pt")
 
 
-def runTest(args):
-    device = torch.device(
-        "cuda" if args.gpu and torch.cuda.is_available() else "cpu"
-    )
+# ADDED: run a trained model on new CT scans, e.g. the test set (see "Run our best model" in readme.md)
+# The 3 HU windows our best model was trained with (SEGTHOR_MULTI): soft tissue, air/lungs, contrast/bone
+BEST_MODEL_WINDOWS = [(-150, 250), (-1000, -200), (100, 500)]
 
-    if args.checkpoint is None:
-        raise ValueError(
-            "Please specify the trained model using --checkpoint."
-        )
 
-    checkpoint = args.checkpoint
-    if not checkpoint.is_file():
-        raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
+def find_scans(scan_dir: Path) -> list[Path]:
+    # Works for both layouts: test/Patient_41.nii.gz and train/Patient_01/Patient_01.nii.gz
+    scans = sorted(scan_dir.glob("Patient_*.nii.gz"))
+    if len(scans) == 0:
+        scans = sorted(scan_dir.glob("Patient_*/Patient_*.nii.gz"))
+    return scans
 
-    # Load the already-trained model
-    net = torch.load(
-        checkpoint, map_location=device, weights_only=False
-    )
-    net = net.to(device)
+
+def predict_scan(net, ct: np.ndarray, device) -> np.ndarray:
+    X, Y, Z = ct.shape
+    windowed_cts = [window_and_norm(ct, hu_min, hu_max) for hu_min, hu_max in BEST_MODEL_WINDOWS]
+
+    # uint8 is enough for the labels 0..4 and makes the .nii.gz files about half as big
+    prediction = np.zeros((X, Y, Z), dtype=np.uint8)
+    for z in range(Z):
+        # The same steps as the slicing (resize to 256x256, uint8) and as img_transform (divide by 255)
+        channels = [resize_(windowed_ct[:, :, z], (256, 256)).astype(np.uint8) for windowed_ct in windowed_cts]
+        img = np.stack(channels, axis=0) / 255  # (3, 256, 256)
+        img = torch.tensor(img, dtype=torch.float32)[None, ...].to(device)  # add the batch dimension
+
+        with torch.no_grad():
+            predicted_class = net(img).argmax(dim=1)[0].cpu().numpy()
+
+        # Back to the size of the scan. Nearest neighbour (order=0) keeps the labels 0..4, as in stitch.py
+        prediction[:, :, z] = resize_(predicted_class, (X, Y), order=0)
+
+    return prediction
+
+
+def runPredict(args):
+    gpu: bool = args.gpu and torch.cuda.is_available()
+    device = torch.device("cuda") if gpu else torch.device("cpu")
+    print(f">> Picked {device} to run the predictions")
+
+    net = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    net.to(device)
     net.eval()
 
-    # Use the same preprocessing and 2.5D stacking as training
-    root_dir = Path("data") / args.dataset
-    channels_per_slice = datasets_params[args.dataset]['in_channels'] if 'in_channels' in datasets_params[args.dataset] else 1
-    test_set = SliceDataset(
-        "test",
-        root_dir,
-        img_transform=partial(img_transform, channels_per_slice),
-        debug=args.debug,
-        is_25d=args.is_25d,
-        crop_size=args.crop_size if args.crop_size > 0 else None,
-        filter_empty=False,
-    )
+    scans = find_scans(args.scan_dir)
+    assert len(scans) > 0, f"No Patient_XX.nii.gz found in {args.scan_dir}"
+    print(f">> Found {len(scans)} scans in {args.scan_dir}")
 
-    test_loader = DataLoader(
-        test_set, batch_size=8, shuffle=False
-    )
+    args.dest.mkdir(parents=True, exist_ok=True)
+    for scan_path in tqdm_(scans, desc="Predicting"):
+        nib_obj = nib.load(str(scan_path))
+        ct = np.asarray(nib_obj.dataobj)
 
-    K = datasets_params[args.dataset]["K"]
-    mult = 63 if K == 5 else 255 / (K - 1)
+        prediction = predict_scan(net, ct, device)
 
-    output_dir = args.dest / "test"
-    output_dir.mkdir(parents=True, exist_ok=True)
+        # Same affine as the scan, so the prediction lies exactly on top of it in a viewer
+        new_nib = nib.nifti1.Nifti1Image(prediction, affine=nib_obj.affine)
+        nib.save(new_nib, args.dest / scan_path.name)
 
-    with torch.no_grad():
-        for data in tqdm_(test_loader, desc="Test inference"):
-            images = data["images"].to(device)
-            outputs = net(images)
-
-            pred_probs = torch.softmax(outputs, dim=1)
-            predicted_class = probs2class(pred_probs)
-
-            save_images(
-                predicted_class * mult,
-                data["stems"],
-                output_dir,
-            )
-
-    print(f"Test predictions saved to {output_dir}")
+    print(f">> Saved {len(scans)} predictions to {args.dest}")
 
 
 def main():
@@ -425,20 +427,20 @@ def main():
     parser.add_argument('--lr', type=float, default=0.0005)
     parser.add_argument('--weight_decay', type=float, default=0.0)
 
-    parser.add_argument("--test", action="store_true")
-    parser.add_argument(
-        "--checkpoint",
-        type=Path,
-        default=None,
-        help="Path to the trained model checkpoint",
-    )
+    # ADDED predict mode: python main.py --predict --scan_dir data/test --dest predictions --gpu
+    parser.add_argument('--predict', action='store_true',
+                        help="Segment the CT scans in --scan_dir with a trained model instead of training")
+    parser.add_argument('--scan_dir', type=Path, default=Path("data/test"),
+                        help="Folder with the CT scans (Patient_XX.nii.gz) to segment")
+    parser.add_argument('--checkpoint', type=Path, default=Path("canvas_submission/bestmodel-group-17.pkl"),
+                        help="The trained model (default: our best model)")
 
     args = parser.parse_args()
 
     pprint(args)
 
-    if args.test:
-        runTest(args)
+    if args.predict:
+        runPredict(args)
     else:
         runTraining(args)
 
