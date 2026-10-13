@@ -100,25 +100,41 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     factor: int = datasets_params[args.dataset]['factor'] if 'factor' in datasets_params[args.dataset] else 2
    
     # ADDED: Dynamic input channel count (1 for 2D, 3 for 2.5D)
-    in_channels: int = 3 if args.is_25d else 1
+    # ADDED: SEGTHOR_MULTI already has 3 channels per slice (one per HU window)
+    channels_per_slice: int = datasets_params[args.dataset]['in_channels'] if 'in_channels' in datasets_params[args.dataset] else 1
+    if args.is_25d:
+        # 2.5D with 3 windows would give 3 x 3 = 9 channels, more than ENet's first layer can take
+        assert channels_per_slice == 1, "--is_25d does not work with SEGTHOR_MULTI"
+        in_channels: int = 3
+    else:
+        in_channels = channels_per_slice
 
     net = datasets_params[args.dataset]['net'](in_channels, K, kernels=kernels, factor=factor)
     net.init_weights()
     net.to(device)
 
-    lr = 0.0005
-    optimizer = torch.optim.Adam(net.parameters(), lr=lr, betas=(0.9, 0.999))
+    lr = args.lr
+    optimizer = torch.optim.Adam(
+        net.parameters(),
+        lr=lr,
+        betas=(0.9, 0.999),
+        weight_decay=args.weight_decay
+    )
 
     # Dataset part
     B: int = datasets_params[args.dataset]['B']
     crop_size: Optional[int] = args.crop_size if args.crop_size and args.crop_size > 0 else None       # so we can run vanilla baseline, and then preprocessed flexibly
-    root_dir = Path("data") / args.dataset
+    # ADDED --data_dir, to train on another folder than data/<dataset> (e.g. one of the folds)
+    if args.data_dir is not None:
+        root_dir = args.data_dir
+    else:
+        root_dir = Path("data") / args.dataset
 
 
 
     train_set = SliceDataset('train',
                              root_dir,
-                             img_transform=img_transform,
+                             img_transform=partial(img_transform, channels_per_slice),
                              gt_transform= partial(gt_transform, K),
                              augment=args.augment,
                              debug=args.debug,
@@ -132,7 +148,7 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
 
     val_set = SliceDataset('val',
                            root_dir,
-                           img_transform=img_transform,
+                           img_transform=partial(img_transform, channels_per_slice),
                            gt_transform=partial(gt_transform, K),
                            debug=args.debug,
                            is_25d=args.is_25d,           # Dimensionality switc
@@ -152,10 +168,36 @@ def runTraining(args):
     print(f">>> Setting up to train on {args.dataset} with {args.mode}")
     net, optimizer, device, train_loader, val_loader, K = setup(args)
 
+    assert args.loss == "ce" or args.mode == "full", "--loss ce_dice only works with --mode full"
+    assert not (args.loss == "ce_dice" and args.weighted_dice_loss), "use --loss ce_dice or --weighted_dice_loss, not both"
     if args.mode == "full":
-        loss_fn = CrossEntropy(idk=list(range(K)))  # Supervise both background and foreground
-    elif args.mode in ["partial"] and args.dataset == 'SEGTHOR':
+        if args.weighted_dice_loss:
+
+            # ADDED the windowed datasets have the same labels as SEGTHOR_CLEAN, so the same class weights
+            if args.dataset not in ["SEGTHOR", "SEGTHOR_CLEAN", "SEGTHOR_WINDOW", "SEGTHOR_MULTI"]:
+                raise ValueError(
+                    "Weighted Dice loss is only available for SEGTHOR datasets"
+                )
+
+            class_weights = [
+   		0.0472,  # background
+    		1.7078,  # esophagus
+    		0.4252,  # heart
+   	 	1.9890,  # trachea
+	    	0.8308   # aorta
+            ]
+
+            loss_fn = DiceWeightedCELoss(weights=class_weights)
+
+        elif args.loss == "ce_dice":
+            # ADDED Cross-entropy on all classes + soft Dice on the organs (not the background)
+            loss_fn = CrossEntropyDice(idk=list(range(K)), dice_idk=list(range(1, K)))
+        else:
+            loss_fn = CrossEntropy(idk=list(range(K)))  # Supervise both background and foreground
+
+    elif args.mode in ["partial"] and args.dataset == "SEGTHOR":
         loss_fn = CrossEntropy(idk=[0, 1, 3, 4])  # Do not supervise the heart (class 2)
+
     else:
         raise ValueError(args.mode, args.dataset)
 
@@ -164,6 +206,7 @@ def runTraining(args):
     log_dice_tra: Tensor = torch.zeros((args.epochs, len(train_loader.dataset), K))
     log_loss_val: Tensor = torch.zeros((args.epochs, len(val_loader)))
     log_dice_val: Tensor = torch.zeros((args.epochs, len(val_loader.dataset), K))
+    log_acc_val: Tensor = torch.zeros((args.epochs, len(val_loader)))
 
     best_dice: float = 0
 
@@ -218,7 +261,13 @@ def runTraining(args):
                     if m == 'val':
                         with warnings.catch_warnings():
                             warnings.filterwarnings('ignore', category=UserWarning)
+
                             predicted_class: Tensor = probs2class(pred_probs)
+                            true_class: Tensor = gt.argmax(dim=1)
+
+                            accuracy = (predicted_class == true_class).float().mean()
+                            log_acc_val[e, i] = accuracy.item()
+
                             mult: int = 63 if K == 5 else (255 / (K - 1))
                             save_images(predicted_class * mult,
                                         data['stems'],
@@ -238,6 +287,28 @@ def runTraining(args):
         np.save(args.dest / "dice_tra.npy", log_dice_tra)
         np.save(args.dest / "loss_val.npy", log_loss_val)
         np.save(args.dest / "dice_val.npy", log_dice_val)
+        np.save(args.dest / "acc_val.npy", log_acc_val)
+
+        # Save diagnostic plots every 10 epochs
+        if (e + 1) % 10 == 0:
+            try:
+                result = subprocess.run(
+                    ["python", "weighted_metrics_plot.py", str(e + 1), str(args.dest)],
+                    check=False
+                )
+
+                if result.returncode != 0:
+                    print(
+                        f"Warning: plotting failed at epoch {e + 1}, "
+                        "training continues."
+                    )
+
+            except Exception as plot_error:
+                print(
+                    f"Warning: plotting failed at epoch {e + 1}: "
+                    f"{plot_error}"
+                )
+                print("Training continues.")
 
         current_dice: float = log_dice_val[e, :, 1:].mean().item()
         if current_dice > best_dice:
@@ -254,6 +325,7 @@ def runTraining(args):
 
             torch.save(net, args.dest / "bestmodel.pkl")
             torch.save(net.state_dict(), args.dest / "bestweights.pt")
+
 
 def runTest(args):
     device = torch.device(
@@ -278,10 +350,11 @@ def runTest(args):
 
     # Use the same preprocessing and 2.5D stacking as training
     root_dir = Path("data") / args.dataset
+    channels_per_slice = datasets_params[args.dataset]['in_channels'] if 'in_channels' in datasets_params[args.dataset] else 1
     test_set = SliceDataset(
         "test",
         root_dir,
-        img_transform=img_transform,
+        img_transform=partial(img_transform, channels_per_slice),
         debug=args.debug,
         is_25d=args.is_25d,
         crop_size=args.crop_size if args.crop_size > 0 else None,
@@ -336,6 +409,22 @@ def main():
                         help="Filter empty slices during training")
     parser.add_argument('--augment', action='store_true', 
                         help="Enable spatial data augmentations")
+    # ADDED HU windowing experiments (hu_window/)
+    parser.add_argument('--data_dir', type=Path, default=None,
+                        help="Folder of the sliced data (default: data/<dataset>). "
+                             "Useful to train on another fold, e.g. data/SEGTHOR_FULL_multi_fold1")
+    parser.add_argument('--loss', default='ce', choices=['ce', 'ce_dice'],
+                        help="ce: cross-entropy only (as the baseline). ce_dice: cross-entropy + soft Dice "
+                             "(only with --mode full), so that small organs count as much as big ones")
+    parser.add_argument(
+    '--weighted_dice_loss',
+    action='store_true',
+    help="Use Dice loss combined with class-weighted cross-entropy"
+    )
+    
+    parser.add_argument('--lr', type=float, default=0.0005)
+    parser.add_argument('--weight_decay', type=float, default=0.0)
+
     parser.add_argument("--test", action="store_true")
     parser.add_argument(
         "--checkpoint",
@@ -343,16 +432,15 @@ def main():
         default=None,
         help="Path to the trained model checkpoint",
     )
+
     args = parser.parse_args()
 
     pprint(args)
 
-    # runTraining(args)
     if args.test:
         runTest(args)
     else:
         runTraining(args)
-        
 
 
 if __name__ == '__main__':
